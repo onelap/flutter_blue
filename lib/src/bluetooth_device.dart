@@ -17,6 +17,42 @@ class BluetoothDevice {
   BehaviorSubject<bool> _isDiscoveringServices = BehaviorSubject.seeded(false);
   Stream<bool> get isDiscoveringServices => _isDiscoveringServices.stream;
 
+  Map<String, Completer> completerMaps = Map();
+  void cancelPendingEstablish() async {
+    for (var kv in completerMaps.entries) {
+      if (kv.value != null && !kv.value.isCompleted) {
+        print("Canceling Operation ${kv.key}");
+        kv.value.completeError("Device Reset");
+      }
+    }
+    if (_services != null) {
+      var lst = await _services.first;
+      for (var item in lst) {
+        for (BluetoothCharacteristic c in item.characteristics) {
+          c?.cancelPendingEstablish();
+        }
+      }
+    }
+  }
+
+  Future<T> _convertStreamToFuture<T>(Stream<T> stream, String key) {
+    Completer<T> completer = Completer<T>();
+    StreamSubscription sub;
+    sub = stream.listen((data) {
+      completer.complete(data);
+      sub.cancel();
+    }, onError: (err) {
+      completer.completeError(err);
+    }, cancelOnError: true);
+
+    completerMaps[key] = completer;
+
+    return completer.future.catchError((err) {
+      sub.cancel();
+      throw err;
+    });
+  }
+
   /// Establishes a connection to the Bluetooth Device.
   Future<void> connect({
     Duration timeout,
@@ -45,8 +81,11 @@ class BluetoothDevice {
   }
 
   /// Cancels connection to the Bluetooth Device
-  Future disconnect() =>
-      FlutterBlue.instance._channel.invokeMethod('disconnect', id.toString());
+  Future disconnect() async {
+    cancelPendingEstablish();
+    await FlutterBlue.instance._channel
+        .invokeMethod('disconnect', id.toString());
+  }
 
   BehaviorSubject<List<BluetoothService>> _services =
       BehaviorSubject.seeded([]);
@@ -58,15 +97,16 @@ class BluetoothDevice {
       return Future.error(new Exception(
           'Cannot discoverServices while device is not connected. State == $s'));
     }
-    var response = FlutterBlue.instance._methodStream
+    Stream stm = FlutterBlue.instance._methodStream
         .where((m) => m.method == "DiscoverServicesResult")
         .map((m) => m.arguments)
         .map((buffer) => new protos.DiscoverServicesResult.fromBuffer(buffer))
         .where((p) => p.remoteId == id.toString())
         .map((p) => p.services)
-        .map((s) => s.map((p) => new BluetoothService.fromProto(p)).toList())
-        .first
-        .then((list) {
+        .map((s) => s.map((p) => new BluetoothService.fromProto(p)).toList());
+
+    Future<List<BluetoothService>> response =
+        _convertStreamToFuture(stm, "discoverServices").then((list) {
       _services.add(list);
       _isDiscoveringServices.add(false);
       return list;

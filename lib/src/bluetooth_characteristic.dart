@@ -21,6 +21,34 @@ class BluetoothCharacteristic {
     }
   }
 
+  Map<String, Completer> completerMaps = Map();
+  void cancelPendingEstablish() {
+    for (var kv in completerMaps.entries) {
+      if (kv.value != null && !kv.value.isCompleted) {
+        print("Canceling Operation ${kv.key}");
+        kv.value.completeError("Device Reset");
+      }
+    }
+  }
+
+  Future<T> _convertStreamToFuture<T>(Stream<T> stream, String key) {
+    Completer<T> completer = Completer<T>();
+    StreamSubscription sub;
+    sub = stream.listen((data) {
+      completer.complete(data);
+      sub.cancel();
+    }, onError: (err) {
+      completer.completeError(err);
+    }, cancelOnError: true);
+
+    completerMaps[key] = completer;
+
+    return completer.future.catchError((err) {
+      sub.cancel();
+      throw err;
+    });
+  }
+
   BehaviorSubject<List<int>> _value;
   Stream<List<int>> get value => Rx.merge([
         _value.stream,
@@ -78,11 +106,10 @@ class BluetoothCharacteristic {
       ..serviceUuid = serviceUuid.toString();
     FlutterBlue.instance._log(LogLevel.info,
         'remoteId: ${deviceId.toString()} characteristicUuid: ${uuid.toString()} serviceUuid: ${serviceUuid.toString()}');
-
     await FlutterBlue.instance._channel
         .invokeMethod('readCharacteristic', request.writeToBuffer());
 
-    return FlutterBlue.instance._methodStream
+    Stream s = FlutterBlue.instance._methodStream
         .where((m) => m.method == "ReadCharacteristicResponse")
         .map((m) => m.arguments)
         .map((buffer) =>
@@ -91,9 +118,9 @@ class BluetoothCharacteristic {
             (p.remoteId == request.remoteId) &&
             (p.characteristic.uuid == request.characteristicUuid) &&
             (p.characteristic.serviceUuid == request.serviceUuid))
-        .map((p) => p.characteristic.value)
-        .first
-        .then((d) {
+        .map((p) => p.characteristic.value);
+    var fut = _convertStreamToFuture(s, "read");
+    return fut.then((d) {
       _value.add(d);
       return d;
     });
@@ -124,7 +151,7 @@ class BluetoothCharacteristic {
       return result;
     }
 
-    return FlutterBlue.instance._methodStream
+    Stream s = FlutterBlue.instance._methodStream
         .where((m) => m.method == "WriteCharacteristicResponse")
         .map((m) => m.arguments)
         .map((buffer) =>
@@ -132,8 +159,8 @@ class BluetoothCharacteristic {
         .where((p) =>
             (p.request.remoteId == request.remoteId) &&
             (p.request.characteristicUuid == request.characteristicUuid) &&
-            (p.request.serviceUuid == request.serviceUuid))
-        .first
+            (p.request.serviceUuid == request.serviceUuid));
+    return _convertStreamToFuture(s, "write")
         .then((w) => w.success)
         .then((success) => (!success)
             ? throw new Exception('Failed to write the characteristic')
@@ -148,19 +175,19 @@ class BluetoothCharacteristic {
       ..serviceUuid = serviceUuid.toString()
       ..characteristicUuid = uuid.toString()
       ..enable = notify;
-
     await FlutterBlue.instance._channel
         .invokeMethod('setNotification', request.writeToBuffer());
 
-    return FlutterBlue.instance._methodStream
+    Stream s = FlutterBlue.instance._methodStream
         .where((m) => m.method == "SetNotificationResponse")
         .map((m) => m.arguments)
         .map((buffer) => new protos.SetNotificationResponse.fromBuffer(buffer))
         .where((p) =>
             (p.remoteId == request.remoteId) &&
             (p.characteristic.uuid == request.characteristicUuid) &&
-            (p.characteristic.serviceUuid == request.serviceUuid))
-        .first
+            (p.characteristic.serviceUuid == request.serviceUuid));
+
+    return _convertStreamToFuture(s, "setNotifyValue")
         .then((p) => new BluetoothCharacteristic.fromProto(p.characteristic))
         .then((c) {
       _updateDescriptors(c.descriptors);
