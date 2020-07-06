@@ -482,6 +482,43 @@ public class FlutterBluePlugin implements FlutterPlugin, ActivityAware, MethodCa
                 break;
             }
 
+            case "writeCharacteristicWithoutResponseTempleFix":
+            {
+                byte[] data = call.arguments();
+                Protos.WriteCharacteristicRequest request;
+                try {
+                    request = Protos.WriteCharacteristicRequest.newBuilder().mergeFrom(data).build();
+                } catch (InvalidProtocolBufferException e) {
+                    result.error("RuntimeException", e.getMessage(), e);
+                    break;
+                }
+
+                BluetoothGatt gattServer;
+                BluetoothGattCharacteristic characteristic;
+                try {
+                    gattServer = locateGatt(request.getRemoteId());
+                    characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
+                } catch(Exception e) {
+                    result.error("write_characteristic_error", e.getMessage(), null);
+                    return;
+                }
+
+                // Set characteristic to new value
+                if(!characteristic.setValue(request.getValue().toByteArray())){
+                    result.error("write_characteristic_error", "could not set the local value of characteristic", null);
+                }
+
+                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+
+                if(!gattServer.writeCharacteristic(characteristic)){
+                    result.success(false);
+                    return;
+                }
+
+                result.success(true);
+                break;
+            }
+
             case "writeDescriptor":
             {
                 byte[] data = call.arguments();

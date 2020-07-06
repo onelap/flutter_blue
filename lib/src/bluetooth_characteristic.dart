@@ -146,10 +146,11 @@ class BluetoothCharacteristic {
 
     var result = await FlutterBlue.instance._channel
         .invokeMethod('writeCharacteristic', request.writeToBuffer());
-
+/*
     if (type == CharacteristicWriteType.withoutResponse) {
       return result;
     }
+*/
 
     Stream s = FlutterBlue.instance._methodStream
         .where((m) => m.method == "WriteCharacteristicResponse")
@@ -166,6 +167,23 @@ class BluetoothCharacteristic {
             ? throw new Exception('Failed to write the characteristic')
             : null)
         .then((_) => null);
+  }
+
+  Future<bool> writeAndroidWithoutResponseTempleFix(List<int> value) async {
+    final type = CharacteristicWriteType.withoutResponse;
+
+    var request = protos.WriteCharacteristicRequest.create()
+      ..remoteId = deviceId.toString()
+      ..characteristicUuid = uuid.toString()
+      ..serviceUuid = serviceUuid.toString()
+      ..writeType =
+          protos.WriteCharacteristicRequest_WriteType.valueOf(type.index)
+      ..value = value;
+
+    var result = await FlutterBlue.instance._channel.invokeMethod(
+        'writeCharacteristicWithoutResponseTempleFix', request.writeToBuffer());
+
+    return result;
   }
 
   /// Sets notifications or indications for the value of a specified characteristic
